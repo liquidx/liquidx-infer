@@ -1,30 +1,52 @@
 <script lang="ts">
-	import { page } from '$app/stores';
 	import { onMount } from 'svelte';
+	import { env } from '$env/dynamic/public';
+	//	const inferenceServer = 'http://localhost:19000/v1/completions';
+	type Config = {
+		url: string;
+		headers: Record<string, string>;
+		params?: Record<string, string>;
+	};
 
-	let inferenceServer = 'http://localhost:19000/v1/completions';
+	const services: { [key: string]: Config } = {
+		'local-llama': {
+			url: 'http://localhost:19000/v1/completions',
+			headers: {}
+		},
+		openai: {
+			url: 'https://api.openai.com/v1/completions',
+			headers: {
+				Authorization: `Bearer ${env.PUBLIC_OPENAI_API_KEY}`
+			},
+			params: {
+				model: 'text-davinci-003'
+			}
+		}
+	};
+
+	const config = services['local-llama'];
 	let query = '';
 	let results = '';
 
 	onMount(() => {});
 
 	const getPrediction = () => {
-		fetch(inferenceServer, {
+		fetch(config.url, {
 			method: 'POST',
 			headers: {
-				'Content-Type': 'application/json'
+				'Content-Type': 'application/json',
+				...config.headers
 			},
 			body: JSON.stringify({
 				prompt: query,
 				temperature: 0.7,
 				stream: false,
-				max_tokens: 2048,
-				stop: ['###', '\n']
+				max_tokens: 512,
+				stop: ['###']
 			})
 		})
 			.then((res) => res.json())
 			.then((data) => {
-				//console.log(data);
 				if (data.choices[0].text) {
 					results = data.choices[0].text;
 				} else {
@@ -34,18 +56,25 @@
 	};
 
 	const getPredictionStreaming = async () => {
-		const response = await fetch(inferenceServer, {
+		let params = {
+			prompt: query,
+			temperature: 0.5,
+			stream: true,
+			max_tokens: 512,
+			stop: ['###']
+		};
+
+		if (config.params) {
+			params = { ...params, ...config.params };
+		}
+
+		const response = await fetch(config.url, {
 			method: 'POST',
 			headers: {
-				'Content-Type': 'application/json'
+				'Content-Type': 'application/json',
+				...config.headers
 			},
-			body: JSON.stringify({
-				prompt: query,
-				temperature: 0.7,
-				stream: true,
-				max_tokens: 2048,
-				stop: ['###', '\n']
-			})
+			body: JSON.stringify(params)
 		});
 
 		if (!response || !response.body) {
@@ -67,10 +96,16 @@
 			const lines = chunk.split('\n');
 			for (const line of lines) {
 				const stripped = line.replace(/^data: /, '').trim();
+				console.log('Data -->', stripped);
 				if (stripped == '') {
 					continue;
 				}
 				if (stripped.endsWith('[DONE]')) {
+					break;
+				}
+				if (stripped.startsWith(': ping')) {
+					// ignore
+					// : ping - 2023-07-20 12:23:01.384429
 					continue;
 				}
 				const parsed = JSON.parse(stripped);
